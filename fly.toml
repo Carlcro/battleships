@@ -1,10 +1,12 @@
-# fly.toml app configuration file generated for bethtest on 2023-07-16T04:53:13-05:00
+# fly.toml app configuration file generated for bun-battleships on 2023-09-14T14:02:39+02:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = "beth-stack"
+app = "bun-battleships"
 primary_region = "ord"
+
+[build]
 
 [http_service]
   internal_port = 3000
