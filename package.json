@@ -30,6 +30,7 @@
     "@elysiajs/html": "^0.6.5",
     "@libsql/client": "latest",
     "drizzle-orm": "^0.27.2",
-    "elysia": "latest"
+    "elysia": "latest",
+    "openai": "^4.6.0"
   }
 }

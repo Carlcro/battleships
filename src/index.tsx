@@ -1,93 +1,145 @@
 import { Elysia, t } from "elysia";
 import { html } from "@elysiajs/html";
 import { db } from "./db";
-import { todos } from "./db/schema";
-import { eq } from "drizzle-orm";
 import { BaseHtml } from "./components/layout/BaseHtml";
-import { TodoItem } from "./components/Todo/TodoItem";
-import { TodoList } from "./components/Todo/TodoList";
-import { Board } from "./components/Battleship/Board";
-import {
-  Grid,
-  placeBoatsOnGridRandomly,
-} from "./components/Battleship/createBoard";
 
-let enemyGrid: Grid;
-const HEIGHT = 7;
-const WIDTH = 7;
+import OpenAI from "openai";
+import { Cell, GameBoard } from "./components/Model/GameBoard";
 
+export interface Boat {
+  id: number;
+  size: number;
+}
+
+type BoatList = Record<number, Boat>;
+
+let aiExecutionPlan: { x: number; y: number }[];
+let turn = 0;
+let board: GameBoard;
+let enemyBoard: GameBoard;
+const BOARD_SIZE = 4;
+const BOATS: BoatList = {
+  1: { id: 1, size: 2 },
+  2: { id: 2, size: 2 },
+  3: { id: 3, size: 3 },
+};
+
+const BoatsSelection = ({
+  shipId,
+  direction,
+}: {
+  shipId?: number;
+  direction?: string;
+}) => (
+  <div class="flex">
+    <a href="/place-boats/1/horizontal">2</a>
+    <a href="/place-boats/2/vertical">2</a>
+    <a href="/place-boats/3/horizontal">3</a>
+    {shipId && (
+      <a
+        href={`/place-boats/${shipId}/${
+          direction === "horizontal" ? "vertical" : "horizontal"
+        }`}
+      >
+        {direction === "horizontal" ? (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-6 h-6"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M17.25 8.25L21 12m0 0l-3.75 3.75M21 12H3"
+            />
+          </svg>
+        ) : (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-6 h-6"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15.75 17.25L12 21m0 0l-3.75-3.75M12 21V3"
+            />
+          </svg>
+        )}
+      </a>
+    )}
+  </div>
+);
 const app = new Elysia()
   .use(html())
-  .get("/", () => {
-    enemyGrid = placeBoatsOnGridRandomly(WIDTH, HEIGHT, [2, 4, 4, 5]);
+  .get("/place-boats", () => {
+    board = new GameBoard(4);
 
     return (
       <BaseHtml>
         <div class="w-screen flex justify-center flex-col items-center mt-10 text-[40px]">
           <h1>Battleship!</h1>
-          <Board height={HEIGHT} width={WIDTH}></Board>
+          <BoatsSelection />
         </div>
       </BaseHtml>
     );
   })
-  .get("/todos", async () => {
-    try {
-      const data = await db.select().from(todos).all();
-      console.log(data);
-      return <TodoList todos={data} />;
-    } catch (error) {
-      console.log(error);
-    }
+  .get("/battle", async () => {
+    enemyBoard = new GameBoard(4);
+    board = new GameBoard(4);
+
+    enemyBoard.addShipsRandomly([
+      { id: 1, size: 2 },
+      { id: 2, size: 3 },
+    ]);
+
+    board.addShipsRandomly([
+      { id: 1, size: 2 },
+      { id: 2, size: 3 },
+    ]);
+
+    turn = 0;
+    aiExecutionPlan = await aiPlan();
+
+    return (
+      <BaseHtml>
+        <div class="w-screen flex justify-center flex-col items-center mt-10 text-[40px]">
+          <h1>Battle!</h1>
+          <div id="battle-board" class="flex space-x-5 text-[40px]">
+            <div>{board.renderOwnBoard()}</div>
+            <div>{enemyBoard.renderAttackBoatsBoard()}</div>
+          </div>
+        </div>
+      </BaseHtml>
+    );
   })
-  .post(
-    "/todos/toggle/:id",
-    async ({ params }) => {
-      const oldTodo = await db
-        .select()
-        .from(todos)
-        .where(eq(todos.id, params.id))
-        .get();
-      const newTodo = await db
-        .update(todos)
-        .set({ completed: !oldTodo.completed })
-        .where(eq(todos.id, params.id))
-        .returning()
-        .get();
-      return <TodoItem {...newTodo} />;
-    },
-    {
-      params: t.Object({
-        id: t.Numeric(),
-      }),
-    }
-  )
-  .delete(
-    "/todos/:id",
-    async ({ params }) => {
-      await db.delete(todos).where(eq(todos.id, params.id)).run();
-    },
-    {
-      params: t.Object({
-        id: t.Numeric(),
-      }),
-    }
-  )
   .post(
     "/attack",
     ({ body }) => {
-      console.log(body, enemyGrid);
+      console.log(body);
+      enemyBoard.recordHit(body.y, body.x);
 
-      const targetHit = enemyGrid[body.y][body.x];
+      console.log("aiExecutionPlan", aiExecutionPlan);
+      console.log("turn", turn);
 
-      if (targetHit > 0) {
-        return (
-          <div class="flex items-center justify-center w-[20px] h-[20px]">
-            {targetHit}
-          </div>
-        );
-      }
+      const enemyAttack = aiExecutionPlan[turn];
+      console.log("enemyAttack", enemyAttack);
+
+      turn = turn + 1;
+
+      board.recordHit(enemyAttack.y, enemyAttack.x);
+
       return (
-        <div class="flex items-center justify-center w-[20px] h-[20px]">❌</div>
+        <div id="battle-board" class="flex space-x-5 text-[40px]">
+          <div>{board.renderOwnBoard()}</div>
+          <div>{enemyBoard.renderAttackBoatsBoard()}</div>
+        </div>
       );
     },
     {
@@ -97,21 +149,171 @@ const app = new Elysia()
       }),
     }
   )
-  .post(
-    "/todos",
-    async ({ body }) => {
-      const newTodo = await db.insert(todos).values(body).returning().get();
-      return <TodoItem {...newTodo} />;
+  .get(
+    "/place-boats/:shipId/:direction",
+    ({ params }) => {
+      return (
+        <BaseHtml>
+          <div class="w-screen flex justify-center flex-col items-center mt-10 text-[40px]">
+            <h1>Battleship!</h1>
+            <BoatsSelection
+              shipId={params.shipId}
+              direction={params.direction}
+            />
+            {board.renderPlaceBoatsBoard(params.shipId, params.direction)}
+          </div>
+          <a href="/battle">start playing</a>
+        </BaseHtml>
+      );
     },
     {
-      body: t.Object({
-        content: t.String({ minLength: 1 }),
+      params: t.Object({
+        shipId: t.Numeric(),
+        direction: t.String(),
       }),
     }
   )
+  .post(
+    "/place-boats/:shipId/:direction",
+    ({ params, body }) => {
+      const startColumn = body.x;
+      const startRow = body.y;
+      let endColumn = body.x;
+      let endRow = body.y;
+
+      const boat = BOATS[params.shipId];
+
+      if (params.direction === "horizontal") {
+        endColumn = body.x + boat.size - 1;
+      } else {
+        endRow = body.y + boat.size - 1;
+      }
+
+      board.addShip(params.shipId, startRow, startColumn, endRow, endColumn);
+      console.log(board.serialize());
+      return board.renderPlaceBoatsBoard(params.shipId, params.direction);
+    },
+    {
+      params: t.Object({
+        shipId: t.Numeric(),
+        direction: t.String(),
+      }),
+      body: t.Object({
+        x: t.Numeric(),
+        y: t.Numeric(),
+      }),
+    }
+  )
+  .get("/", () => {
+    board = new GameBoard(4);
+
+    return (
+      <BaseHtml>
+        <div class="w-screen flex justify-center flex-col items-center mt-10 text-[40px]">
+          <h1>Battleship!</h1>
+        </div>
+      </BaseHtml>
+    );
+  })
+
+  /*   .get("/openai", async () => {
+    const openai = new OpenAI({
+      apiKey: process.env.OPEN_AI_API_KEY,
+    });
+
+    const stream = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "user",
+          content: `Hi, I want to play battleships with you. The grid is ${HEIGHT}x${WIDTH}. We both have ${
+            BOATS.length
+          }, with the sizes ${BOATS.join(
+            ","
+          )} . I will give you my boats position 
+          but you have to pretend that you don't know it. My boats are on [{x:1, y:1},  {x1,y2}] and [{x:2, y:2},  {x3,y2}]   
+          Give me you exact execution plan in a JSON format that i can turn into a javascript object. Example of the format would be
+          [{x:1, y:1}, {x:2, y:1}]
+          and so on.
+          Only answer with your execution plan and nothing else. Stop when you found my boats`,
+        },
+      ],
+      stream: true,
+    });
+
+    for await (const part of stream) {
+      process.stdout.write(part.choices[0]?.delta?.content || "");
+    }
+  }) */
+
   .get("/styles.css", () => Bun.file("./tailwind-gen/styles.css"))
   .listen(3000);
 
 console.log(
   `Elysia is running at http://${app.server?.hostname}:${app.server?.port}`
 );
+
+const aiPlan = async () => {
+  const openai = new OpenAI({
+    apiKey: process.env.OPEN_AI_API_KEY,
+  });
+
+  const content = `I'm making a battleship game. I want you to act as the opponent in my game. I only want to make one request to get your execution plan so I will give you the position of the players boats. You will then send me which positions you want to attack. I want you to be smart and use use the knowledge that you hit a boat to figure out your next attack. Since I only want to send one request to you I will give you the position of the users boats. I want you to play as if you dont know the position and. only use that data to see if you hit or miss. Ok lets start 
+
+  The grid is ${BOARD_SIZE}x${BOARD_SIZE}. ${
+    Object.keys(BOATS).length
+  } boats, with the sizes ${Object.values(BOATS)
+    .map((x) => x.size)
+    .join(",")}, which means you need to make ${Object.values(BOATS)
+    .map((x) => x.size)
+    .reduce(
+      (prev, c) => prev + c,
+      0
+    )} hits to win. I will give you my boats position 
+   but you have to pretend that you don't know it. My board looks like this ${JSON.stringify(
+     findNumberPositions(board.board)
+   )}  where the numbers are my boats 
+  
+  Give me you exact execution plan in a JSON format that i can turn into a javascript object. Example of the format would be
+   [{x:1, y:1}, {x:2, y:1}]
+   and so on.
+   Only answer with your execution plan and nothing else. Stop when you found all my boats.
+  
+  I repeat, don't give me explications of what you are doing. Only reply with json data of the execution plan since I want to parse the message in my node program. 
+  And stop when you found all my boats. Don't continue to attack then`;
+
+  console.log(content);
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      {
+        role: "user",
+        content,
+      },
+    ],
+    stream: false,
+  });
+
+  let plan = [];
+
+  console.log(response.choices[0].message.content);
+
+  const parsed = JSON.parse(response.choices[0].message.content || "");
+  console.log("plan", parsed);
+  return parsed;
+};
+
+function findNumberPositions(arr: Cell[][]) {
+  const positions = [];
+
+  for (let y = 0; y < arr.length; y++) {
+    for (let x = 0; x < arr[y].length; x++) {
+      if (typeof arr[y][x] === "number") {
+        positions.push({ x: x, y: y });
+      }
+    }
+  }
+
+  return positions;
+}
