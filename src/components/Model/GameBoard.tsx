@@ -114,6 +114,18 @@ export class GameBoard {
     return false;
   }
 
+  allBoatsHadBeenFound(): boolean {
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if (typeof this.board[i][j] === "number") {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   renderAttackBoatsBoard(): JSX.Element {
     const rows = [];
 

@@ -24,6 +24,12 @@ const BOATS: BoatList = {
   3: { id: 3, size: 3 },
 };
 
+const ENEMY_BOATS = [
+  { id: 1, size: 2 },
+  { id: 2, size: 2 },
+  { id: 3, size: 3 },
+];
+
 const BoatsSelection = ({
   shipId,
   direction,
@@ -92,17 +98,8 @@ const app = new Elysia()
   })
   .get("/battle", async () => {
     enemyBoard = new GameBoard(4);
-    board = new GameBoard(4);
 
-    enemyBoard.addShipsRandomly([
-      { id: 1, size: 2 },
-      { id: 2, size: 3 },
-    ]);
-
-    board.addShipsRandomly([
-      { id: 1, size: 2 },
-      { id: 2, size: 3 },
-    ]);
+    enemyBoard.addShipsRandomly(ENEMY_BOATS);
 
     turn = 0;
     aiExecutionPlan = await aiPlan();
@@ -122,18 +119,34 @@ const app = new Elysia()
   .post(
     "/attack",
     ({ body }) => {
-      console.log(body);
       enemyBoard.recordHit(body.y, body.x);
 
-      console.log("aiExecutionPlan", aiExecutionPlan);
-      console.log("turn", turn);
+      const playerWon = enemyBoard.allBoatsHadBeenFound();
+
+      if (playerWon) {
+        return (
+          <div>
+            <h1>YOU WON</h1>
+            <a href="place-boats">Play again</a>
+          </div>
+        );
+      }
 
       const enemyAttack = aiExecutionPlan[turn];
-      console.log("enemyAttack", enemyAttack);
+      board.recordHit(enemyAttack.y, enemyAttack.x);
+
+      const enemyWon = board.allBoatsHadBeenFound();
+
+      if (enemyWon) {
+        return (
+          <div>
+            <h1>COMPUTER WON</h1>
+            <a href="place-boats">Play again</a>
+          </div>
+        );
+      }
 
       turn = turn + 1;
-
-      board.recordHit(enemyAttack.y, enemyAttack.x);
 
       return (
         <div id="battle-board" class="flex space-x-5 text-[40px]">
@@ -163,6 +176,7 @@ const app = new Elysia()
             {board.renderPlaceBoatsBoard(params.shipId, params.direction)}
           </div>
           <a href="/battle">start playing</a>
+          <div class="htmx-indicator">LOADING!</div>
         </BaseHtml>
       );
     },
@@ -190,7 +204,6 @@ const app = new Elysia()
       }
 
       board.addShip(params.shipId, startRow, startColumn, endRow, endColumn);
-      console.log(board.serialize());
       return board.renderPlaceBoatsBoard(params.shipId, params.direction);
     },
     {
@@ -205,46 +218,15 @@ const app = new Elysia()
     }
   )
   .get("/", () => {
-    board = new GameBoard(4);
-
     return (
       <BaseHtml>
         <div class="w-screen flex justify-center flex-col items-center mt-10 text-[40px]">
           <h1>Battleship!</h1>
+          <a href="/place-boats">Start Playing!</a>
         </div>
       </BaseHtml>
     );
   })
-
-  /*   .get("/openai", async () => {
-    const openai = new OpenAI({
-      apiKey: process.env.OPEN_AI_API_KEY,
-    });
-
-    const stream = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "user",
-          content: `Hi, I want to play battleships with you. The grid is ${HEIGHT}x${WIDTH}. We both have ${
-            BOATS.length
-          }, with the sizes ${BOATS.join(
-            ","
-          )} . I will give you my boats position 
-          but you have to pretend that you don't know it. My boats are on [{x:1, y:1},  {x1,y2}] and [{x:2, y:2},  {x3,y2}]   
-          Give me you exact execution plan in a JSON format that i can turn into a javascript object. Example of the format would be
-          [{x:1, y:1}, {x:2, y:1}]
-          and so on.
-          Only answer with your execution plan and nothing else. Stop when you found my boats`,
-        },
-      ],
-      stream: true,
-    });
-
-    for await (const part of stream) {
-      process.stdout.write(part.choices[0]?.delta?.content || "");
-    }
-  }) */
 
   .get("/styles.css", () => Bun.file("./tailwind-gen/styles.css"))
   .listen(3000);
@@ -258,7 +240,10 @@ const aiPlan = async () => {
     apiKey: process.env.OPEN_AI_API_KEY,
   });
 
-  const content = `I'm making a battleship game. I want you to act as the opponent in my game. I only want to make one request to get your execution plan so I will give you the position of the players boats. You will then send me which positions you want to attack. I want you to be smart and use use the knowledge that you hit a boat to figure out your next attack. Since I only want to send one request to you I will give you the position of the users boats. I want you to play as if you dont know the position and. only use that data to see if you hit or miss. Ok lets start 
+  const content = `I'm making a battleship game. I want you to act as the opponent in my game. I only want to make one request to get your execution plan so I will give you the position of the players boats. 
+  You will then send me which positions you want to attack. I want you to be smart and use use the knowledge that you hit a boat to figure out your next attack. 
+  Since I only want to send one request to you I will give you the position of the users boats. 
+  I want you to play as if you dont know the position and. only use that data to see if you hit or miss. Ok lets start 
 
   The grid is ${BOARD_SIZE}x${BOARD_SIZE}. ${
     Object.keys(BOATS).length
@@ -285,7 +270,7 @@ const aiPlan = async () => {
   console.log(content);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4",
+    model: "gpt-3.5-turbo",
     messages: [
       {
         role: "user",
@@ -295,12 +280,9 @@ const aiPlan = async () => {
     stream: false,
   });
 
-  let plan = [];
-
   console.log(response.choices[0].message.content);
 
   const parsed = JSON.parse(response.choices[0].message.content || "");
-  console.log("plan", parsed);
   return parsed;
 };
 
